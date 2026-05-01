@@ -117,8 +117,9 @@ def generate_palette_commands_custom(
 ) -> List[Tuple[str, int]]:
     h1, s1, b1 = current_hsv
     h2, s2, b2 = target_hsv
-
     dh = h2 - h1
+    sv_interval = TimingConfig.sv_key_interval_ms
+
     if dh > 0:
         hue_cmds = [("ZR", TimingConfig.key_interval_ms)] * dh
     else:
@@ -126,15 +127,15 @@ def generate_palette_commands_custom(
 
     ds = s2 - s1
     if ds > 0:
-        sat_cmds = [("RIGHT", TimingConfig.key_interval_ms)] * ds
+        sat_cmds = [("RIGHT", sv_interval)] * ds
     else:
-        sat_cmds = [("LEFT", TimingConfig.key_interval_ms)] * (-ds)
+        sat_cmds = [("LEFT", sv_interval)] * (-ds)
 
     db = b2 - b1
     if db > 0:
-        val_cmds = [("UP", TimingConfig.key_interval_ms)] * db
+        val_cmds = [("UP", sv_interval)] * db
     else:
-        val_cmds = [("DOWN", TimingConfig.key_interval_ms)] * (-db)
+        val_cmds = [("DOWN", sv_interval)] * (-db)
 
     cmds: List[Tuple[str, int]] = [
         (
@@ -143,11 +144,11 @@ def generate_palette_commands_custom(
         ),  # 打开快捷栏
         (
             "Y",
-            TimingConfig.key_interval_ms + TimingConfig.wait_interval_ms,
+            TimingConfig.key_interval_ms + 2 * TimingConfig.wait_interval_ms,
         ),  # 打开调色盘
         (
             "R",
-            TimingConfig.key_interval_ms + TimingConfig.wait_interval_ms,
+            TimingConfig.key_interval_ms + 2 * TimingConfig.wait_interval_ms,
         ),  # 切换到自定义模式
     ]
     cmds.extend(hue_cmds)

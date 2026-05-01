@@ -270,6 +270,14 @@ class VirtualGamepadPage(QWidget):
         )
         self._create_timing_slider(
             timing_layout,
+            "S/V按键间隔",
+            50,
+            500,
+            TimingConfig.sv_key_interval_ms,
+            lambda v: TimingConfig.set_params(sv_key_interval=v),
+        )
+        self._create_timing_slider(
+            timing_layout,
             "等待间隔",
             50,
             500,
@@ -407,8 +415,7 @@ class VirtualGamepadPage(QWidget):
         self.log_text.addAction(clear_action)
 
     def apply_style(self):
-        self.setStyleSheet(
-            """
+        self.setStyleSheet("""
             QLabel { color: #2c2c2c; }
             QPushButton {
                 background-color: #e0e0e0;
@@ -435,14 +442,12 @@ class VirtualGamepadPage(QWidget):
                 margin-top: 10px;
                 padding-top: 10px;
             }
-        """
-        )
+        """)
 
     def update_button_styles(self):
         for name, btn in self.button_widgets.items():
             if self.button_states.get(name, False):
-                btn.setStyleSheet(
-                    """
+                btn.setStyleSheet("""
                     QPushButton {
                         background-color: #4CAF50;
                         border: 2px solid #2E7D32;
@@ -450,11 +455,9 @@ class VirtualGamepadPage(QWidget):
                         font-weight: bold;
                         color: white;
                     }
-                """
-                )
+                """)
             else:
-                btn.setStyleSheet(
-                    """
+                btn.setStyleSheet("""
                     QPushButton {
                         background-color: #e0e0e0;
                         border: 1px solid #aaa;
@@ -462,8 +465,7 @@ class VirtualGamepadPage(QWidget):
                         font-weight: bold;
                         color: #333;
                     }
-                """
-                )
+                """)
 
     def keyPressEvent(self, event: QKeyEvent):
         if event.isAutoRepeat():

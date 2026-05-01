@@ -11,16 +11,24 @@
 
 class TimingConfig:
     key_interval_ms: int = 100
+    sv_key_interval_ms: int = 200
     wait_interval_ms: int = 100
     draw_ms: int = 100
     press_hold_ms: int = 30
 
     @classmethod
     def set_params(
-        cls, key_interval=None, wait_interval=None, draw=None, press_hold=None
+        cls,
+        key_interval=None,
+        sv_key_interval=None,
+        wait_interval=None,
+        draw=None,
+        press_hold=None,
     ):
         if key_interval is not None:
             cls.key_interval_ms = key_interval
+        if sv_key_interval is not None:
+            cls.sv_key_interval_ms = sv_key_interval
         if wait_interval is not None:
             cls.wait_interval_ms = wait_interval
         if draw is not None:

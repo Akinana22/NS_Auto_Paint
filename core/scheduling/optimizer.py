@@ -223,9 +223,8 @@ class SchedulingOptimizer:
                     h_steps = abs(target_h - cur_h)
                     s_steps = abs(target_s - cur_s)
                     b_steps = abs(target_b - cur_b)
-                    total_ms += (
-                        h_steps + s_steps + b_steps
-                    ) * TimingConfig.key_interval_ms
+                    total_ms += h_steps * TimingConfig.key_interval_ms
+                    total_ms += (s_steps + b_steps) * TimingConfig.sv_key_interval_ms
                     total_ms += TimingConfig.key_interval_ms  # A 确认
                     total_ms += TimingConfig.wait_interval_ms  # 退出等待
                     cur_h, cur_s, cur_b = target_h, target_s, target_b
@@ -286,9 +285,8 @@ class SchedulingOptimizer:
                     h_steps = abs(target_h - cur_h)
                     s_steps = abs(target_s - cur_s)
                     b_steps = abs(target_b - cur_b)
-                    total_ms += (
-                        h_steps + s_steps + b_steps
-                    ) * TimingConfig.key_interval_ms
+                    total_ms += h_steps * TimingConfig.key_interval_ms
+                    total_ms += (s_steps + b_steps) * TimingConfig.sv_key_interval_ms
                     total_ms += TimingConfig.key_interval_ms
                     total_ms += TimingConfig.wait_interval_ms
                     cur_h, cur_s, cur_b = target_h, target_s, target_b

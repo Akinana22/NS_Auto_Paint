@@ -4,6 +4,7 @@
 使用 HEX 判断预设调色盘位置。
 画笔自适应扫描排序由 SchedulingOptimizer 提供。
 在关键步骤插入注释，便于日志中显示宏观目标。
+支持通过 timing 参数传入冻结的快照，未传则回退 TimingConfig 类属性。
 """
 
 import os
@@ -20,6 +21,7 @@ from core.scheduling.palette import (
 )
 from core.scheduling.move import generate_move_commands
 from core.scheduling.optimizer import SchedulingOptimizer
+from core.scheduling.timing_config import TimingConfig, TimingSnapshot
 from core.models.drawing import Schedule, Palette
 
 
@@ -42,7 +44,10 @@ def generate_drawing_script(
     brush_type: Optional[str] = None,
     brush_size: Optional[int] = None,
     press_data: Optional[List[dict]] = None,
+    timing: Optional[TimingSnapshot] = None,
 ) -> Tuple[str, Schedule, int, int]:
+    cfg = timing or TimingConfig
+
     # 1. 确定网格矩阵
     if brush_type is not None and brush_size is not None:
         step = brush_size
@@ -66,6 +71,7 @@ def generate_drawing_script(
         grid_h,
         palette=palette,
         press_data=press_data,
+        timing=timing,
     )
 
     lines: List[str] = []
@@ -80,7 +86,9 @@ def generate_drawing_script(
 
     # 3. 画笔切换指令
     brush_cmds = (
-        generate_brush_switch_commands(brush_type, brush_size) if brush_type else []
+        generate_brush_switch_commands(brush_type, brush_size, timing=timing)
+        if brush_type
+        else []
     )
     if brush_cmds:
         emit("# === 画笔切换 ===")
@@ -118,7 +126,7 @@ def generate_drawing_script(
         # ---- 调色盘切换（第一个颜色）----
         if use_preset:
             palette_cmds, cur_row, cur_col = generate_palette_commands_preset(
-                hex_color, cur_row, cur_col
+                hex_color, cur_row, cur_col, timing=timing
             )
             emit(f"# 切换颜色: HEX {hex_color} (R{cur_row}C{cur_col})")
         else:
@@ -127,7 +135,9 @@ def generate_drawing_script(
                 target_hsv = (target["h"], target["s"], target["b"])
             else:
                 target_hsv = (0, 0, 0)
-            palette_cmds = generate_palette_commands_custom(cur_hsv, target_hsv)
+            palette_cmds = generate_palette_commands_custom(
+                cur_hsv, target_hsv, timing=timing
+            )
             cur_hsv = target_hsv
             emit(
                 f"# 切换颜色: 目标 HSB({target_hsv[0]},{target_hsv[1]},{target_hsv[2]})"
@@ -141,11 +151,13 @@ def generate_drawing_script(
             dx = gx - cur_gx
             dy = gy - cur_gy
             if dx != 0 or dy != 0:
-                move_cmds = generate_move_commands(dx, dy, brush_type, brush_size)
+                move_cmds = generate_move_commands(
+                    dx, dy, brush_type, brush_size, timing=timing
+                )
                 for cmd in move_cmds:
                     emit(_instruction_to_script(cmd))
                 cur_gx, cur_gy = gx, gy
-            emit("A 100")
+            emit(f"A {cfg.draw_ms}")
 
         # 后续颜色：使用自适应排序
         for color_idx in color_order[1:]:
@@ -160,7 +172,7 @@ def generate_drawing_script(
             # ---- 调色盘切换 ----
             if use_preset:
                 palette_cmds, cur_row, cur_col = generate_palette_commands_preset(
-                    hex_color, cur_row, cur_col
+                    hex_color, cur_row, cur_col, timing=timing
                 )
                 emit(f"# 切换颜色: HEX {hex_color} (R{cur_row}C{cur_col})")
             else:
@@ -169,7 +181,9 @@ def generate_drawing_script(
                     target_hsv = (target["h"], target["s"], target["b"])
                 else:
                     target_hsv = (0, 0, 0)
-                palette_cmds = generate_palette_commands_custom(cur_hsv, target_hsv)
+                palette_cmds = generate_palette_commands_custom(
+                    cur_hsv, target_hsv, timing=timing
+                )
                 cur_hsv = target_hsv
                 emit(
                     f"# 切换颜色: 目标 HSB({target_hsv[0]},{target_hsv[1]},{target_hsv[2]})"
@@ -183,11 +197,13 @@ def generate_drawing_script(
                 dx = gx - cur_gx
                 dy = gy - cur_gy
                 if dx != 0 or dy != 0:
-                    move_cmds = generate_move_commands(dx, dy, brush_type, brush_size)
+                    move_cmds = generate_move_commands(
+                        dx, dy, brush_type, brush_size, timing=timing
+                    )
                     for cmd in move_cmds:
                         emit(_instruction_to_script(cmd))
                     cur_gx, cur_gy = gx, gy
-                emit("A 100")
+                emit(f"A {cfg.draw_ms}")
 
     emit()
     emit("# === 绘制完成 ===")

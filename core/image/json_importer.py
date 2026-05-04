@@ -3,7 +3,7 @@ JSON 导入器 v2.2.0
 解析第三方像素画 JSON 文件（如 living-the-grid 格式），转换为内部格式。
 支持顺滑画笔和像素画笔两种模式，处理网格居中与缩放。
 适配新版 JSON 中的 press 对象（h/s/b 对应 ZR/方向键右/方向键上按下次数），
-并处理 h=201 时需要替换为 0 的特殊规则。
+并处理 h=200 需替换为 199、h=201 需替换为 0 的特殊规则。
 颜色匹配使用 HEX 字符串。
 """
 
@@ -120,7 +120,9 @@ class JsonImporter:
                 if isinstance(item, dict) and "press" in item:
                     p = item["press"]
                     h = p.get("h", 0)
-                    if h in (200, 201):
+                    if h == 200:
+                        h = 199
+                    elif h == 201:
                         h = 0
                     s = p.get("s", 0)
                     b = p.get("b", 0)

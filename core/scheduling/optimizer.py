@@ -3,7 +3,7 @@
 负责生成多种候选调度方案（固定网格、四叉树不同阈值），
 使用蛇形扫描路径评估各方案的耗时，并选出最优方案。
 画笔当前位置会影响同区块内下一个颜色的扫描方向，以减少无效移动。
-参数已统一为 key_interval_ms、wait_interval_ms、draw_ms、press_hold_ms。
+支持通过 timing 参数传入冻结的快照，未传则回退 TimingConfig 类属性。
 """
 
 from typing import List, Tuple, Optional
@@ -11,7 +11,7 @@ import numpy as np
 
 from core.models.drawing import LeafBlock, Schedule
 from core.scheduling.quadtree import build_quadtree
-from core.scheduling.timing_config import TimingConfig
+from core.scheduling.timing_config import TimingConfig, TimingSnapshot
 
 
 class SchedulingOptimizer:
@@ -151,6 +151,7 @@ class SchedulingOptimizer:
         grid_h: int,
         palette: List[List[int]],  # 调色板 RGB 列表
         press_data: Optional[List[dict]] = None,
+        timing: Optional[TimingSnapshot] = None,
     ) -> float:
         """
         精确计算调度方案的总耗时（毫秒）。
@@ -158,6 +159,8 @@ class SchedulingOptimizer:
         """
         if not schedule:
             return float("inf")
+
+        cfg = timing or TimingConfig
 
         cur_gx, cur_gy = grid_w // 2, grid_h // 2
         total_ms = 0.0
@@ -172,7 +175,9 @@ class SchedulingOptimizer:
         if brush_type is not None and brush_size is not None:
             from core.scheduling.brush import generate_brush_switch_commands
 
-            brush_cmds = generate_brush_switch_commands(brush_type, brush_size)
+            brush_cmds = generate_brush_switch_commands(
+                brush_type, brush_size, timing=timing
+            )
             total_ms += sum(cmd[1] for cmd in brush_cmds)
 
         # 引入调色盘寻路所需函数和映射表
@@ -194,24 +199,22 @@ class SchedulingOptimizer:
                 if use_preset:
                     # 基础：Y 长按 + Y 普通
                     total_ms += (
-                        TimingConfig.key_interval_ms
-                        + TimingConfig.wait_interval_ms
-                        + TimingConfig.key_interval_ms
+                        cfg.key_interval_ms + cfg.wait_interval_ms + cfg.key_interval_ms
                     )
                     target_row, target_col = _PRESET_COORD_MAP[target_hex]
                     path_len = len(_bfs_path(cur_row, cur_col, target_row, target_col))
-                    total_ms += path_len * TimingConfig.key_interval_ms
-                    total_ms += TimingConfig.key_interval_ms  # A 确认
-                    total_ms += TimingConfig.wait_interval_ms  # 退出等待
+                    total_ms += path_len * cfg.key_interval_ms
+                    total_ms += cfg.key_interval_ms  # A 确认
+                    total_ms += cfg.wait_interval_ms  # 退出等待
                     cur_row, cur_col = target_row, target_col
                 else:
                     # 基础：Y 长按 + Y 普通 + R 长按
                     total_ms += (
-                        TimingConfig.key_interval_ms
-                        + TimingConfig.wait_interval_ms  # Y 长按
-                        + TimingConfig.key_interval_ms  # Y 普通
-                        + TimingConfig.key_interval_ms
-                        + TimingConfig.wait_interval_ms  # R 长按
+                        cfg.key_interval_ms
+                        + cfg.wait_interval_ms  # Y 长按
+                        + cfg.key_interval_ms  # Y 普通
+                        + cfg.key_interval_ms
+                        + cfg.wait_interval_ms  # R 长按
                     )
                     if press_data and first_color < len(press_data):
                         pd = press_data[first_color]
@@ -223,26 +226,30 @@ class SchedulingOptimizer:
                     h_steps = abs(target_h - cur_h)
                     s_steps = abs(target_s - cur_s)
                     b_steps = abs(target_b - cur_b)
-                    total_ms += h_steps * TimingConfig.key_interval_ms
-                    total_ms += (s_steps + b_steps) * TimingConfig.sv_key_interval_ms
-                    total_ms += TimingConfig.key_interval_ms  # A 确认
-                    total_ms += TimingConfig.wait_interval_ms  # 退出等待
+                    total_ms += h_steps * cfg.key_interval_ms
+                    total_ms += (s_steps + b_steps) * cfg.sv_key_interval_ms
+                    total_ms += cfg.key_interval_ms  # A 确认
+                    total_ms += cfg.wait_interval_ms  # 退出等待
                     cur_h, cur_s, cur_b = target_h, target_s, target_b
 
                 # ---- 移动到第一个点 ----
                 sorted_pts = SchedulingOptimizer._snake_sort_points(pts)
                 px, py = sorted_pts[0]
                 steps = abs(cur_gx - px) + abs(cur_gy - py)
-                total_ms += self._move_to_ms(steps, brush_type, brush_size)
+                total_ms += self._move_to_ms(
+                    steps, brush_type, brush_size, timing=timing
+                )
                 cur_gx, cur_gy = px, py
 
                 # ---- 绘制该颜色所有点 ----
                 for gx, gy in sorted_pts[1:]:
                     step = abs(cur_gx - gx) + abs(cur_gy - gy)
-                    total_ms += self._move_to_ms(step, brush_type, brush_size)
-                    total_ms += TimingConfig.draw_ms
+                    total_ms += self._move_to_ms(
+                        step, brush_type, brush_size, timing=timing
+                    )
+                    total_ms += cfg.draw_ms
                     cur_gx, cur_gy = gx, gy
-                total_ms += TimingConfig.draw_ms  # 第一个点也要绘制
+                total_ms += cfg.draw_ms  # 第一个点也要绘制
 
             # ---------- 后续颜色 ----------
             for color_idx in color_order[1:]:
@@ -257,23 +264,21 @@ class SchedulingOptimizer:
                 )
                 if use_preset:
                     total_ms += (
-                        TimingConfig.key_interval_ms
-                        + TimingConfig.wait_interval_ms
-                        + TimingConfig.key_interval_ms
+                        cfg.key_interval_ms + cfg.wait_interval_ms + cfg.key_interval_ms
                     )
                     target_row, target_col = _PRESET_COORD_MAP[target_hex]
                     path_len = len(_bfs_path(cur_row, cur_col, target_row, target_col))
-                    total_ms += path_len * TimingConfig.key_interval_ms
-                    total_ms += TimingConfig.key_interval_ms
-                    total_ms += TimingConfig.wait_interval_ms
+                    total_ms += path_len * cfg.key_interval_ms
+                    total_ms += cfg.key_interval_ms
+                    total_ms += cfg.wait_interval_ms
                     cur_row, cur_col = target_row, target_col
                 else:
                     total_ms += (
-                        TimingConfig.key_interval_ms
-                        + TimingConfig.wait_interval_ms
-                        + TimingConfig.key_interval_ms
-                        + TimingConfig.key_interval_ms
-                        + TimingConfig.wait_interval_ms
+                        cfg.key_interval_ms
+                        + cfg.wait_interval_ms
+                        + cfg.key_interval_ms
+                        + cfg.key_interval_ms
+                        + cfg.wait_interval_ms
                     )
                     if press_data and color_idx < len(press_data):
                         pd = press_data[color_idx]
@@ -285,31 +290,38 @@ class SchedulingOptimizer:
                     h_steps = abs(target_h - cur_h)
                     s_steps = abs(target_s - cur_s)
                     b_steps = abs(target_b - cur_b)
-                    total_ms += h_steps * TimingConfig.key_interval_ms
-                    total_ms += (s_steps + b_steps) * TimingConfig.sv_key_interval_ms
-                    total_ms += TimingConfig.key_interval_ms
-                    total_ms += TimingConfig.wait_interval_ms
+                    total_ms += h_steps * cfg.key_interval_ms
+                    total_ms += (s_steps + b_steps) * cfg.sv_key_interval_ms
+                    total_ms += cfg.key_interval_ms
+                    total_ms += cfg.wait_interval_ms
                     cur_h, cur_s, cur_b = target_h, target_s, target_b
 
                 # ---- 绘制该颜色所有点 ----
                 sorted_pts = self.sort_points_adaptive(pts, cur_gx, cur_gy)
                 for gx, gy in sorted_pts:
                     step = abs(cur_gx - gx) + abs(cur_gy - gy)
-                    total_ms += self._move_to_ms(step, brush_type, brush_size)
-                    total_ms += TimingConfig.draw_ms
+                    total_ms += self._move_to_ms(
+                        step, brush_type, brush_size, timing=timing
+                    )
+                    total_ms += cfg.draw_ms
                     cur_gx, cur_gy = gx, gy
 
         return total_ms
 
     def _move_to_ms(
-        self, steps: int, brush_type: Optional[str], brush_size: Optional[int]
+        self,
+        steps: int,
+        brush_type: Optional[str],
+        brush_size: Optional[int],
+        timing: Optional[TimingSnapshot] = None,
     ) -> float:
         """将网格移动步数转换为耗时（毫秒）"""
+        cfg = timing or TimingConfig
         if brush_type == "smooth" and brush_size and brush_size > 1:
             actual_move = steps * brush_size
         else:
             actual_move = steps
-        return actual_move * TimingConfig.key_interval_ms
+        return actual_move * cfg.key_interval_ms
 
     def find_best_schedule(
         self,
@@ -321,6 +333,7 @@ class SchedulingOptimizer:
         grid_h: int,
         palette: List[List[int]],
         press_data: Optional[List[dict]] = None,
+        timing: Optional[TimingSnapshot] = None,
     ) -> Tuple[Optional[Schedule], str, List[str]]:
         candidates = self.generate_candidate_schedules(
             grid_matrix, brush_type, brush_size
@@ -340,6 +353,7 @@ class SchedulingOptimizer:
                 grid_h,
                 palette=palette,
                 press_data=press_data,
+                timing=timing,
             )
             logs.append(f"{desc}: {cost/1000:.1f} 秒")
             if cost < best_cost:

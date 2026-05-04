@@ -1,5 +1,5 @@
 """
-像素图生成窗口 v2.2.0
+像素图生成窗口 v2.3.0
 用于"朋友收集梦想生活"像素绘图工具。
 可嵌入标签页或独立窗口显示。
 支持预设/自定义调色盘，JSON 第三方导入，以及最优调度预估。
@@ -36,6 +36,7 @@ from core.image.preset_palette import get_preset_palette, get_preset_color_count
 from services.image_worker import ImageProcessWorkerPyx
 from services.batch_converter import BatchConvertWorker
 from core.scheduling.optimizer import SchedulingOptimizer
+from core.scheduling.timing_config import TimingConfig
 
 
 class MainPage(QWidget):
@@ -706,6 +707,9 @@ class MainPage(QWidget):
             QMessageBox.warning(self, "提示", "请先生成像素图。")
             return
 
+        # 冻结当前时序参数快照，评估期间不受 UI 修改影响
+        timing = TimingConfig.snapshot()
+
         # 使用调度优化器评估最优方案
         try:
             optimizer = SchedulingOptimizer()
@@ -728,6 +732,7 @@ class MainPage(QWidget):
                 grid_h,
                 palette=self.color_palette,
                 press_data=getattr(self, "press_data", None),
+                timing=timing,
             )
             if best_schedule is None:
                 QMessageBox.warning(self, "错误", "无法生成调度方案，请检查数据。")
@@ -742,6 +747,7 @@ class MainPage(QWidget):
                 grid_h,
                 palette=self.color_palette,
                 press_data=getattr(self, "press_data", None),
+                timing=timing,
             )
             total_sec = total_ms / 1000.0
             minutes = int(total_sec // 60)

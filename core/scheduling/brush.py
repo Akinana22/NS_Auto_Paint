@@ -1,43 +1,46 @@
 """
 画笔切换指令生成模块 v2.2.0
 所有按键间隔统一使用 key_interval_ms，特殊等待使用 wait_interval_ms 叠加。
+支持通过 timing 参数传入冻结的快照，未传则回退 TimingConfig 类属性。
 """
 
-from typing import List, Tuple
-from core.scheduling.timing_config import TimingConfig
+from typing import List, Tuple, Optional
+from core.scheduling.timing_config import TimingConfig, TimingSnapshot
 
 
 def generate_brush_switch_commands(
-    brush_type: str, brush_size: int
+    brush_type: str, brush_size: int, timing: Optional[TimingSnapshot] = None
 ) -> List[Tuple[str, int]]:
     if brush_type is None or brush_size is None:
         return []
 
+    cfg = timing or TimingConfig
+
     cmds: List[Tuple[str, int]] = []
 
     # 打开画笔设置界面
-    cmds.append(("X", TimingConfig.key_interval_ms))  # 打开工具栏
+    cmds.append(("X", cfg.key_interval_ms))  # 打开工具栏
     cmds.append(
-        ("X", TimingConfig.key_interval_ms + TimingConfig.wait_interval_ms)
+        ("X", cfg.key_interval_ms + cfg.wait_interval_ms)
     )  # 进入画笔设置(等待画笔工具展开)
 
     # 切换到像素画笔
     if brush_type == "pixel":
-        cmds.append(("UP", TimingConfig.key_interval_ms))
-        cmds.append(("RIGHT", TimingConfig.key_interval_ms))
-        cmds.append(("A", TimingConfig.key_interval_ms))
-        cmds.append(("WAIT", TimingConfig.wait_interval_ms))
+        cmds.append(("UP", cfg.key_interval_ms))
+        cmds.append(("RIGHT", cfg.key_interval_ms))
+        cmds.append(("A", cfg.key_interval_ms))
+        cmds.append(("WAIT", cfg.wait_interval_ms))
 
     # 方向键移动
     move_sequence = _get_size_move_sequence(brush_type, brush_size)
     for direction in move_sequence:
-        cmds.append((direction, TimingConfig.key_interval_ms))
+        cmds.append((direction, cfg.key_interval_ms))
 
     # 确认与退出
-    cmds.append(("A", TimingConfig.key_interval_ms))
-    cmds.append(("WAIT", TimingConfig.wait_interval_ms))  # 确保选中生效
-    cmds.append(("A", TimingConfig.key_interval_ms))
-    cmds.append(("WAIT", TimingConfig.wait_interval_ms))  # 退出工具箱后的稳定等待
+    cmds.append(("A", cfg.key_interval_ms))
+    cmds.append(("WAIT", cfg.wait_interval_ms))  # 确保选中生效
+    cmds.append(("A", cfg.key_interval_ms))
+    cmds.append(("WAIT", cfg.wait_interval_ms))  # 退出工具箱后的稳定等待
 
     return cmds
 

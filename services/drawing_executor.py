@@ -5,6 +5,7 @@
 
 断点仅记录脚本行号和已标记绘制点的矩阵，不保存任何游戏内 UI 状态。
 恢复方式由用户选择：继续当前脚本，或用修改后的矩阵重新生成脚本。
+start_drawing 入口处冻结 TimingConfig 快照，任务期间不受 UI 调整影响。
 
 使用方式：
     from services.drawing_executor import DrawingExecutor
@@ -28,6 +29,7 @@ from core.models.drawing import Palette, Schedule
 from core.scripting.drawing_script_generator import generate_drawing_script
 from core.scripting.checkpoint_manager import CheckpointManager
 from core.scheduling.optimizer import SchedulingOptimizer
+from core.scheduling.timing_config import TimingConfig, TimingSnapshot
 from services.script_executor import ScriptExecutor
 
 
@@ -102,6 +104,9 @@ class DrawingExecutor(QObject):
         self._saved_matrix = np.asarray(color_index_matrix, dtype=np.int16)  # 原始矩阵
         self._saved_pixel_size = pixel_size
 
+        # 冻结当前 TimingConfig 快照，任务期间不受 UI 修改影响
+        timing = TimingConfig.snapshot()
+
         # 生成脚本
         try:
             self.log_signal.emit("[脚本] 正在生成绘图脚本...")
@@ -113,6 +118,7 @@ class DrawingExecutor(QObject):
                 brush_type,
                 brush_size,
                 press_data,
+                timing=timing,
             )
             self._current_script = script
             self._current_schedule = schedule
@@ -143,7 +149,7 @@ class DrawingExecutor(QObject):
 
         # 执行脚本
         self.log_signal.emit("[执行] 开始绘图...")
-        self._executor.execute(script, start_line=0)
+        self._executor.execute(script, start_line=0, timing=timing)
 
     def stop_drawing(self):
         """停止绘图（安全等待后保存断点）"""
@@ -236,13 +242,17 @@ class DrawingExecutor(QObject):
 
     # ========== 内部方法 ==========
     def _count_completed_pixels(self, script: str, stop_line: int) -> int:
-        """统计脚本前 stop_line 行中 'A 100' 指令的数量，代表已绘制的像素数"""
+        """统计脚本前 stop_line 行中 A 指令的数量，代表已绘制的像素数"""
         lines = script.splitlines()
         count = 0
         for i in range(min(stop_line + 1, len(lines))):
             line = lines[i].strip().upper()
-            # 检测绘制指令：A 100（顺滑画笔或像素画笔都是 A 100）
-            if line.startswith("A") and "100" in line:
+            # 检测绘制指令：以 A 开头的非 DOWN/UP 格式（如 "A 100"）
+            if (
+                line.startswith("A")
+                and not line.endswith("DOWN")
+                and not line.endswith("UP")
+            ):
                 count += 1
         return count
 

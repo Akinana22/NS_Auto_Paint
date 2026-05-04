@@ -1,13 +1,14 @@
 """
 调色盘切换指令生成模块 v2.2.0
 按键间隔统一为 key_interval_ms，长按效果使用 key_interval_ms + wait_interval_ms，退出等待使用 wait_interval_ms。
+支持通过 timing 参数传入冻结的快照，未传则回退 TimingConfig 类属性。
 """
 
 from collections import deque
 from typing import List, Tuple, Dict, Optional
 
 from core.image.preset_palette import get_preset_palette_hex
-from core.scheduling.timing_config import TimingConfig
+from core.scheduling.timing_config import TimingConfig, TimingSnapshot
 
 
 def _build_coord_map() -> Dict[str, Tuple[int, int]]:
@@ -75,7 +76,9 @@ def generate_palette_commands_preset(
     target_hex: str,
     cur_row: int,
     cur_col: int,
+    timing: Optional[TimingSnapshot] = None,
 ) -> Tuple[List[Tuple[str, int]], int, int]:
+    cfg = timing or TimingConfig
     key = target_hex.upper()
     if key not in _PRESET_COORD_MAP:
         target_rgb = _hex_to_rgb(target_hex)
@@ -94,19 +97,19 @@ def generate_palette_commands_preset(
     cmds: List[Tuple[str, int]] = [
         (
             "Y",
-            TimingConfig.key_interval_ms,
+            cfg.key_interval_ms,
         ),  # 打开快捷栏
         (
             "Y",
-            TimingConfig.key_interval_ms + TimingConfig.wait_interval_ms,
+            cfg.key_interval_ms + cfg.wait_interval_ms,
         ),  # 打开调色盘
     ]
 
     path = _bfs_path(cur_row, cur_col, target_row, target_col)
     for action in path:
-        cmds.append((action, TimingConfig.key_interval_ms))
-    cmds.append(("A", TimingConfig.key_interval_ms))  # 确认
-    cmds.append(("WAIT", 2 * TimingConfig.wait_interval_ms))  # 退出等待
+        cmds.append((action, cfg.key_interval_ms))
+    cmds.append(("A", cfg.key_interval_ms))  # 确认
+    cmds.append(("WAIT", 2 * cfg.wait_interval_ms))  # 退出等待
 
     return cmds, target_row, target_col
 
@@ -114,16 +117,18 @@ def generate_palette_commands_preset(
 def generate_palette_commands_custom(
     current_hsv: Tuple[int, int, int],
     target_hsv: Tuple[int, int, int],
+    timing: Optional[TimingSnapshot] = None,
 ) -> List[Tuple[str, int]]:
+    cfg = timing or TimingConfig
     h1, s1, b1 = current_hsv
     h2, s2, b2 = target_hsv
     dh = h2 - h1
-    sv_interval = TimingConfig.sv_key_interval_ms
+    sv_interval = cfg.sv_key_interval_ms
 
     if dh > 0:
-        hue_cmds = [("ZR", TimingConfig.key_interval_ms)] * dh
+        hue_cmds = [("ZR", cfg.key_interval_ms)] * dh
     else:
-        hue_cmds = [("ZL", TimingConfig.key_interval_ms)] * (-dh)
+        hue_cmds = [("ZL", cfg.key_interval_ms)] * (-dh)
 
     ds = s2 - s1
     if ds > 0:
@@ -140,22 +145,22 @@ def generate_palette_commands_custom(
     cmds: List[Tuple[str, int]] = [
         (
             "Y",
-            TimingConfig.key_interval_ms,
+            cfg.key_interval_ms,
         ),  # 打开快捷栏
         (
             "Y",
-            TimingConfig.key_interval_ms + 2 * TimingConfig.wait_interval_ms,
+            cfg.key_interval_ms + 2 * cfg.wait_interval_ms,
         ),  # 打开调色盘
         (
             "R",
-            TimingConfig.key_interval_ms + 2 * TimingConfig.wait_interval_ms,
+            cfg.key_interval_ms + 2 * cfg.wait_interval_ms,
         ),  # 切换到自定义模式
     ]
     cmds.extend(hue_cmds)
     cmds.extend(sat_cmds)
     cmds.extend(val_cmds)
-    cmds.append(("A", TimingConfig.key_interval_ms))
-    cmds.append(("WAIT", 2 * TimingConfig.wait_interval_ms))
+    cmds.append(("A", cfg.key_interval_ms))
+    cmds.append(("WAIT", 2 * cfg.wait_interval_ms))
 
     return cmds
 

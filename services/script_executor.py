@@ -1,8 +1,9 @@
 """
-脚本执行器 v2.2.0
+脚本执行器 v2.3.0
 解析符合官方 EasyCon 脚本语法的文本，逐条发送 HID 报告到单片机。
 通过 log_signal 输出每条指令的人类可读描述，并在停止时动态计算安全等待时间。
 指令闭环保证：按键的 按下 → 保持 → 释放 过程不会被停止信号打断。
+支持通过 execute() 传入 timing 快照，未传则回退 TimingConfig 类属性。
 """
 
 import time
@@ -14,7 +15,7 @@ from PySide6.QtCore import QObject, Signal
 from core.hal.controller import EasyConController
 from core.hal.constants import SwitchButtons, SwitchHAT
 from core.utils.logger import get_logger
-from core.scheduling.timing_config import TimingConfig
+from core.scheduling.timing_config import TimingConfig, TimingSnapshot
 
 
 class ScriptExecutor(QObject):
@@ -56,11 +57,13 @@ class ScriptExecutor(QObject):
         self._stop_flag = False
         self._thread: Optional[threading.Thread] = None
         self._current_line = 0
+        self._timing: Optional[TimingSnapshot] = None
 
-    def execute(self, script: str, start_line: int = 0):
+    def execute(self, script: str, start_line: int = 0, timing: Optional[TimingSnapshot] = None):
         if self._thread and self._thread.is_alive():
             self.logger.warning("已有脚本正在执行")
             return
+        self._timing = timing
         self._stop_flag = False
         self._thread = threading.Thread(
             target=self._run, args=(script, start_line), daemon=True
@@ -119,6 +122,7 @@ class ScriptExecutor(QObject):
     # ---------- 人类可读描述 ----------
     def _describe_line(self, line: str) -> str:
         """将一行脚本命令转换为简短说明"""
+        cfg = self._timing or TimingConfig
         if "#" in line:
             line = line[: line.find("#")].strip()
         if not line:
@@ -144,7 +148,7 @@ class ScriptExecutor(QObject):
                     return f"释放 {btn}"
                 else:
                     return (
-                        f"操作 {btn} (按压{TimingConfig.press_hold_ms}ms, 间隔{arg}ms)"
+                        f"操作 {btn} (按压{cfg.press_hold_ms}ms, 间隔{arg}ms)"
                     )
             return f"按下 {btn} (默认)"
 
@@ -172,6 +176,7 @@ class ScriptExecutor(QObject):
     # ---------- 指令解析与执行 ----------
     def _execute_line(self, line: str):
         """解析并执行一行指令"""
+        cfg = self._timing or TimingConfig
         if "#" in line:
             line = line[: line.find("#")].strip()
         if not line:
@@ -197,7 +202,7 @@ class ScriptExecutor(QObject):
 
         # 按键指令 --- 关键修改：保证按下-保持-释放闭环不受停止信号影响
         if cmd in self.BUTTON_MAP or cmd in self.HAT_MAP:
-            duration = TimingConfig.key_interval_ms
+            duration = cfg.key_interval_ms
             down_only = False
             up_only = False
 
@@ -221,11 +226,11 @@ class ScriptExecutor(QObject):
                 # 1. 按下
                 self._press(cmd)
                 # 2. 保持时间（不可中断）
-                self._wait(TimingConfig.press_hold_ms, force=True)
+                self._wait(cfg.press_hold_ms, force=True)
                 # 3. 释放（无论停止标志如何，都执行）
                 self._release(cmd)
                 # 4. 剩余等待（可中断，用于响应停止请求）
-                remaining = duration - TimingConfig.press_hold_ms
+                remaining = duration - cfg.press_hold_ms
                 if remaining > 0:
                     self._wait(remaining)
             return

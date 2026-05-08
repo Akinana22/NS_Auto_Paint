@@ -16,18 +16,19 @@ class ImageProcessWorkerPyx(QThread):
     )  # (pixel_image, color_palette, color_index_matrix), unique_colors
     error = Signal(str)
 
-    def __init__(self, image_path, pixel_size, max_colors, use_preset=False):
+    def __init__(self, image_path, pixel_size, max_colors, use_preset=False, canvas_mode="standard"):
         super().__init__()
         self.image_path = image_path
         self.pixel_size = pixel_size
         self.max_colors = max_colors
         self.use_preset = use_preset
+        self.canvas_mode = canvas_mode
 
     def run(self):
         logger = get_logger("image_processor")
         logger.info(
             f"[后台线程启动] pixel_size={self.pixel_size}, max_colors={self.max_colors}, "
-            f"use_preset={self.use_preset}"
+            f"use_preset={self.use_preset}, canvas_mode={self.canvas_mode}"
         )
         try:
             pixel_image, color_palette, color_index_matrix = pixelate_image_simple(
@@ -35,6 +36,7 @@ class ImageProcessWorkerPyx(QThread):
                 self.pixel_size,
                 self.max_colors,
                 use_preset=self.use_preset,
+                canvas_mode=self.canvas_mode,
             )
             unique_colors = len(color_palette)
             logger.info(f"[后台线程完成] 实际颜色数: {unique_colors}")

@@ -12,7 +12,7 @@ import time
 from typing import List, Tuple, Optional
 import numpy as np
 
-from core.scheduling.brush import generate_brush_switch_commands
+from core.scheduling.brush import generate_brush_nav_sequence
 from core.scheduling.palette import (
     generate_palette_commands_preset,
     generate_palette_commands_custom,
@@ -33,6 +33,10 @@ def _instruction_to_script(cmd: Tuple[str, int]) -> str:
     btn, total_ms = cmd
     if btn == "WAIT":
         return f"WAIT {total_ms}"
+    if btn.startswith("__DOWN__"):
+        return f"{btn[8:]} DOWN"
+    if btn.startswith("__UP__"):
+        return f"{btn[6:]} UP"
     return f"{btn} {total_ms}"
 
 
@@ -86,9 +90,7 @@ def generate_drawing_script(
 
     # 3. 画笔切换指令
     brush_cmds = (
-        generate_brush_switch_commands(brush_type, brush_size, timing=timing)
-        if brush_type
-        else []
+        generate_brush_nav_sequence(brush_type, brush_size, timing=timing) if brush_type else []
     )
     if brush_cmds:
         emit("# === 画笔切换 ===")

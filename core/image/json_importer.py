@@ -1,10 +1,11 @@
 """
-JSON 导入器 v2.2.0
+JSON 导入器 v2.3.0
 解析第三方像素画 JSON 文件（如 living-the-grid 格式），转换为内部格式。
 支持顺滑画笔和像素画笔两种模式，处理网格居中与缩放。
 适配新版 JSON 中的 press 对象（h/s/b 对应 ZR/方向键右/方向键上按下次数），
 并处理 h=200 需替换为 199、h=201 需替换为 0 的特殊规则。
 颜色匹配使用 HEX 字符串。
+顺滑画笔生效区域为居中扩展（基于游戏底层 a=(n-1)/2, b=(n+1)/2 公式）。
 """
 
 import json
@@ -13,6 +14,7 @@ from typing import List, Tuple, Dict, Any, Optional
 
 from core.utils.logger import get_logger
 from core.image.preset_palette import get_preset_palette_hex
+from core.models.canvas_mode import CanvasMode, get_canvas_mode, json_preset_to_canvas_mode, CANVAS_MODE_DISPLAY
 
 
 class JsonImporter:
@@ -26,6 +28,7 @@ class JsonImporter:
         file_path: str,
         brush_type: str,
         brush_size: int,
+        canvas_mode: str = "standard",
     ) -> Tuple[Optional[np.ndarray], Optional[List[List[int]]], Dict[str, Any]]:
         """
         从 JSON 文件加载像素画数据。
@@ -34,15 +37,17 @@ class JsonImporter:
             file_path: JSON 文件路径
             brush_type: 画笔类型，"smooth"（顺滑）或 "pixel"（像素）
             brush_size: 画笔尺寸（1,3,7,13,19,27 或 4,8,16,32）
+            canvas_mode: 画布模式（"standard", "book", "tv", "game", "decoration"）
 
         Returns:
             (color_index_matrix, color_palette, metadata)
-            - color_index_matrix: 256×256 颜色索引矩阵（-1 表示透明）
+            - color_index_matrix: 256×256 颜色索引矩阵（-1 表示透明或无效区域）
             - color_palette: RGB 调色板列表 [[r,g,b], ...]
             - metadata: 包含 width, height, brush_type, brush_size 等信息的字典
         """
+        mode = get_canvas_mode(canvas_mode)
         self.logger.info(f"开始导入 JSON 文件: {file_path}")
-        self.logger.info(f"画笔类型: {brush_type}, 尺寸: {brush_size}")
+        self.logger.info(f"画笔类型: {brush_type}, 尺寸: {brush_size}, 画布模式: {mode.name}")
 
         # 1. 读取并解析 JSON
         try:
@@ -173,44 +178,81 @@ class JsonImporter:
                 base_x = offset_x + col * cell_span
                 base_y = offset_y + row * cell_span
 
+                # 顺滑画笔居中填充：从 (cx-a, cy-a) 开始填 n×n
+                if brush_type == "smooth" and cell_span > 1:
+                    a = (cell_span - 1) // 2
+                    cx = base_x + cell_span // 2
+                    cy = base_y + cell_span // 2
+                    fill_start_x = cx - a
+                    fill_start_y = cy - a
+                else:
+                    fill_start_x = base_x
+                    fill_start_y = base_y
+
                 for dy in range(cell_span):
-                    y = base_y + dy
+                    y = fill_start_y + dy
                     if y < 0 or y >= 256:
                         continue
                     for dx in range(cell_span):
-                        x = base_x + dx
+                        x = fill_start_x + dx
                         if x < 0 or x >= 256:
                             continue
                         color_index_matrix[y, x] = idx
+
+        # 解析 JSON 顶层 canvas 字段（画布模式）
+        json_canvas = data.get("canvas")
+        if isinstance(json_canvas, dict):
+            preset = json_canvas.get("preset")
+            if preset:
+                detected_mode = json_preset_to_canvas_mode(preset)
+                mode_obj = get_canvas_mode(detected_mode)
+                cw = json_canvas.get("w")
+                ch = json_canvas.get("h")
+                if cw is not None and ch is not None:
+                    if cw != mode_obj.active_w or ch != mode_obj.active_h:
+                        self.logger.warning(
+                            f"JSON canvas 尺寸 ({cw}x{ch}) 与预设 {preset} "
+                            f"({mode_obj.active_w}x{mode_obj.active_h}) 不匹配，以预设为准"
+                        )
+                self.logger.info(
+                    f"检测到画布模式: {preset} → {CANVAS_MODE_DISPLAY[detected_mode]}"
+                )
+            else:
+                detected_mode = canvas_mode
+        else:
+            detected_mode = canvas_mode
+
         # 8. 解析顶层 brush 字段（如果存在）
         json_brush_type = None
         json_brush_size = None
         brush_data = data.get("brush")
         if isinstance(brush_data, dict):
-            mode = brush_data.get("mode")
+            bmode = brush_data.get("mode")
             px = brush_data.get("px")
-            if mode in ("smooth", "pixel"):
-                json_brush_type = mode
+            if bmode in ("smooth", "pixel"):
+                json_brush_type = bmode
             else:
-                self.logger.warning(f"未知的画笔模式: {mode}，忽略")
+                self.logger.warning(f"未知的画笔模式: {bmode}，忽略")
             if isinstance(px, int):
                 json_brush_size = px
             else:
                 if json_brush_type is not None:
                     self.logger.warning(f"无效的画笔尺寸: {px}")
                     json_brush_type = None
+
         # 9. 构建元数据
         metadata = {
             "width": width,
             "height": height,
-            "brush_type": brush_type,  # 用户当前选择的画笔类型（调用方传入）
-            "brush_size": brush_size,  # 用户当前选择的笔尖大小
+            "brush_type": brush_type,
+            "brush_size": brush_size,
             "palette_size": len(color_palette),
             "total_pixels": np.sum(color_index_matrix >= 0),
             "offset": (offset_x, offset_y),
             "all_preset": len(missing_hex) == 0,
-            "json_brush_type": json_brush_type,  # 新增：JSON 原始画笔类型
-            "json_brush_size": json_brush_size,  # 新增：JSON 原始笔尖大小
+            "json_brush_type": json_brush_type,
+            "json_brush_size": json_brush_size,
+            "canvas_mode": detected_mode,
         }
         if press_data is not None:
             metadata["press_data"] = press_data

@@ -37,6 +37,7 @@ from services.image_worker import ImageProcessWorkerPyx
 from services.batch_converter import BatchConvertWorker
 from core.scheduling.optimizer import SchedulingOptimizer
 from core.scheduling.timing_config import TimingConfig
+from ui.widgets.canvas_preview import CanvasPreview
 
 
 class MainPage(QWidget):
@@ -79,6 +80,10 @@ class MainPage(QWidget):
         self.generated_is_preset = True
         # 绘图模式：image 或 json
         self.drawing_mode = "image"
+        # 画布模式
+        self.canvas_mode = "standard"
+        self.canvas_mode_names = {"standard": "标准", "book": "书籍", "tv": "电视", "game": "游戏", "decoration": "装修"}
+        self._current_preview_pixmap: QPixmap | None = None
 
     def setup_ui(self):
         main_layout = QHBoxLayout(self)
@@ -211,25 +216,13 @@ class MainPage(QWidget):
         toolbox_group.setLayout(toolbox_layout)
         left_panel.addWidget(toolbox_group)
 
-        # ========== 中间预览（保持不变） ==========
+        # ========== 中间预览 ==========
         middle_panel = QVBoxLayout()
         preview_group = QGroupBox("预览 (256x256)")
         preview_layout = QVBoxLayout()
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(False)
-        self.scroll_area.setAlignment(Qt.AlignCenter)
-        self.scroll_area.setStyleSheet(
-            "border: none; background-color: rgba(255,255,255,200);"
-        )
-        self.preview_label_img = QLabel("暂无图片")
-        self.preview_label_img.setAlignment(Qt.AlignCenter)
-        self.preview_label_img.setStyleSheet(
-            "border: 2px dashed gray; background-color: rgba(255,255,255,200);"
-        )
-        self.preview_label_img.setScaledContents(False)
-        self.preview_label_img.setFixedSize(256, 256)
-        self.scroll_area.setWidget(self.preview_label_img)
-        preview_layout.addWidget(self.scroll_area, 1)
+        self.canvas_preview = CanvasPreview()
+        self.canvas_preview.setMinimumSize(256, 256)
+        preview_layout.addWidget(self.canvas_preview, 1)
         preview_group.setLayout(preview_layout)
         middle_panel.addWidget(preview_group)
 
@@ -276,6 +269,16 @@ class MainPage(QWidget):
 
         json_layout.addWidget(self.brush_size_label)
         json_layout.addWidget(self.brush_size_slider)
+
+        # 画布模式选择
+        canvas_mode_layout = QHBoxLayout()
+        canvas_mode_layout.addWidget(QLabel("画布模式:"))
+        self.canvas_mode_combo = QComboBox()
+        self.canvas_mode_combo.addItems(["标准", "书籍", "电视", "游戏", "装修"])
+        self.canvas_mode_combo.setCurrentIndex(0)
+        self.canvas_mode_combo.currentIndexChanged.connect(self._on_canvas_mode_changed)
+        canvas_mode_layout.addWidget(self.canvas_mode_combo)
+        json_layout.addLayout(canvas_mode_layout)
 
         # 上传 JSON 按钮（对应上传图片）
         self.btn_upload_json = QPushButton("📁 上传 JSON")
@@ -447,6 +450,12 @@ class MainPage(QWidget):
             self.brush_size = self.current_brush_sizes[idx]
             self.brush_size_label.setText(f"笔尖大小: {self.brush_size}")
 
+    def _on_canvas_mode_changed(self, idx):
+        modes = list(self.canvas_mode_names.keys())
+        if 0 <= idx < len(modes):
+            self.canvas_mode = modes[idx]
+            self.canvas_preview.setCanvasMode(self.canvas_mode)
+
     def on_upload_json(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self, "选择 JSON 文件", "", "JSON 文件 (*.json)"
@@ -499,7 +508,8 @@ class MainPage(QWidget):
             return
         importer = JsonImporter()
         matrix, palette, metadata = importer.load_from_file(
-            self.json_file_path, self.brush_type, self.brush_size
+            self.json_file_path, self.brush_type, self.brush_size,
+            canvas_mode=self.canvas_mode,
         )
         if matrix is None:
             QMessageBox.critical(self, "导入失败", metadata.get("error", "未知错误"))
@@ -513,6 +523,16 @@ class MainPage(QWidget):
 
         # 保存 press_data（自定义模式下的 HSV 按键次数）
         self.press_data = metadata.get("press_data")
+
+        # 自动选中 JSON 中的画布模式
+        canvas_mode_key = metadata.get("canvas_mode")
+        if canvas_mode_key and canvas_mode_key != self.canvas_mode:
+            self.canvas_mode = canvas_mode_key
+            display_name = self.canvas_mode_names.get(canvas_mode_key, "标准")
+            idx = self.canvas_mode_combo.findText(display_name)
+            if idx >= 0:
+                self.canvas_mode_combo.setCurrentIndex(idx)
+            self.log(f"  画布模式: {display_name}")
 
         self.log(f"已上传 JSON: {os.path.basename(self.json_file_path)}")
         self.log(
@@ -550,9 +570,10 @@ class MainPage(QWidget):
                 else:
                     img_array[y, x] = [0, 0, 0, 0]
         qimage = QImage(img_array.data, w, h, w * 4, QImage.Format_RGBA8888)
-        self.processed_pixmap = QPixmap.fromImage(qimage)
-        self.zoom_factor = 1.0
-        self.update_preview_zoom()
+        pixmap = QPixmap.fromImage(qimage)
+        self.canvas_preview.setPixmap(pixmap)
+        self.canvas_preview.setCanvasMode(self.canvas_mode)
+        self._current_preview_pixmap = pixmap
         # 同时更新内部变量供定稿使用
         self.color_index_matrix = matrix
         self.color_palette = palette
@@ -569,13 +590,13 @@ class MainPage(QWidget):
         if pixmap.isNull():
             QMessageBox.warning(self, "错误", "无法加载图片，请检查文件格式。")
             return
-        self.original_pixmap = pixmap
-        self.processed_pixmap = None
         self.pixel_image = None
         self.color_palette = None
         self.color_index_matrix = None
-        self.zoom_factor = 1.0
-        self.update_preview_zoom()
+        self.canvas_preview.setPixmap(pixmap)
+        self.canvas_preview.setCanvasMode(self.canvas_mode)
+        self._current_preview_pixmap = pixmap
+        self.btn_generate.setEnabled(True)
         self.log(f"已上传图片: {os.path.basename(file_path)}")
         self.logger.info(f"上传图片: {os.path.basename(file_path)}")
         self.btn_generate.setEnabled(True)
@@ -611,6 +632,7 @@ class MainPage(QWidget):
             self.pixel_size_values[self.pixel_size_slider.value()],
             target_colors,
             use_preset=self.generated_is_preset,
+            canvas_mode=self.canvas_mode,
         )
         self.worker.finished.connect(self.on_image_processed)
         self.worker.error.connect(self.on_image_error)
@@ -626,9 +648,10 @@ class MainPage(QWidget):
         qimage = QImage(
             data, pixel_image.width, pixel_image.height, QImage.Format_RGBA8888
         )
-        self.processed_pixmap = QPixmap.fromImage(qimage)
-        self.zoom_factor = 1.0
-        self.update_preview_zoom()
+        pixmap = QPixmap.fromImage(qimage)
+        self.canvas_preview.setPixmap(pixmap)
+        self.canvas_preview.setCanvasMode(self.canvas_mode)
+        self._current_preview_pixmap = pixmap
 
         pixel_size = self.pixel_size_values[self.pixel_size_slider.value()]
         target_colors = self.current_color_values[self.color_slider.value()]
@@ -648,34 +671,7 @@ class MainPage(QWidget):
         QMessageBox.critical(self, "错误", f"图片处理失败:\n{error_msg}")
         self.btn_generate.setEnabled(True)
 
-    # ---------- 预览缩放（保持不变） ----------
-    def wheelEvent(self, event: QWheelEvent):
-        if self.preview_label_img.underMouse():
-            delta = event.angleDelta().y()
-            if delta > 0:
-                self.zoom_factor *= 1.1
-            else:
-                self.zoom_factor *= 0.9
-            self.zoom_factor = max(0.5, min(4.0, self.zoom_factor))
-            self.update_preview_zoom()
-            event.accept()
-        else:
-            super().wheelEvent(event)
-
-    def update_preview_zoom(self):
-        base_pixmap = (
-            self.processed_pixmap if self.processed_pixmap else self.original_pixmap
-        )
-        if base_pixmap:
-            base_size = 256
-            new_size = int(base_size * self.zoom_factor)
-            scaled_pixmap = base_pixmap.scaled(
-                new_size, new_size, Qt.KeepAspectRatio, Qt.FastTransformation
-            )
-            self.preview_label_img.setPixmap(scaled_pixmap)
-            self.preview_label_img.setFixedSize(new_size, new_size)
-
-    # ---------- 导出（保持不变） ----------
+    # ---------- 导出 ----------
     def on_export(self):
         if self.color_index_matrix is None:
             QMessageBox.warning(self, "提示", "没有可导出的像素图，请先生成或渲染。")
@@ -693,7 +689,7 @@ class MainPage(QWidget):
         if not save_path:
             return
         try:
-            self.processed_pixmap.save(save_path, "PNG")
+            self._current_preview_pixmap.save(save_path, "PNG")
             self.log(f"像素图已导出: {save_path}")
             self.logger.info(f"像素图已导出: {save_path}")
         except Exception as e:

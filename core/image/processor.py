@@ -1,7 +1,8 @@
 """
-图像像素化处理模块 v2.2.0
+图像像素化处理模块 v2.3.0
 提供将任意图片转换为像素风格并生成颜色索引矩阵的核心算法。
 支持预设调色盘（84色 K-Means 聚类）和自定义调色盘（Pyxelate 自动提取）两种模式。
+支持多画布模式（书籍、电视、游戏、装修），非有效区域像素自动屏蔽。
 """
 
 import sys
@@ -12,6 +13,7 @@ from sklearn.cluster import KMeans
 
 from core.utils.logger import get_logger
 from core.image.preset_palette import get_preset_palette
+from core.models.canvas_mode import get_canvas_mode
 
 # 允许的颜色数量列表（自定义模式）
 ALLOWED_COLOR_COUNTS = [4, 8, 16, 32, 64, 128, 256]
@@ -31,6 +33,7 @@ def pixelate_image_pyxelate(
     max_colors: int,
     output_color_data_path: str = None,
     use_preset: bool = False,
+    canvas_mode: str = "standard",
 ):
     """
     对图片进行像素化处理。
@@ -41,13 +44,15 @@ def pixelate_image_pyxelate(
         max_colors: 最大颜色数
         output_color_data_path: 可选，保存色彩数据到 .npz 文件
         use_preset: True 使用预设84色调色板 + K-Means；False 使用 Pyxelate 自动提取
+        canvas_mode: 画布模式（"standard", "book", "tv", "game", "decoration"）
 
     Returns:
         (canvas, color_palette, color_index_matrix)
         - canvas: PIL.Image，256x256 RGBA 像素图
         - color_palette: list of [r,g,b]，调色板
-        - color_index_matrix: np.ndarray (256, 256)，颜色索引（-1 = 透明）
+        - color_index_matrix: np.ndarray (256, 256)，颜色索引（-1 = 透明或无效区域）
     """
+    mode = get_canvas_mode(canvas_mode)
     # 动态导入 Pyxelate（仅在自定义模式时需要）
     if not use_preset:
         libs_path = os.path.join(
@@ -193,9 +198,11 @@ def pixelate_image_pyxelate(
 
 
 def pixelate_image_simple(
-    image_path: str, pixel_size: int, max_colors: int, use_preset: bool = False
+    image_path: str, pixel_size: int, max_colors: int, use_preset: bool = False,
+    canvas_mode: str = "standard",
 ):
     """pixelate_image_pyxelate 的简易包装"""
     return pixelate_image_pyxelate(
-        image_path, pixel_size, max_colors, use_preset=use_preset
+        image_path, pixel_size, max_colors, use_preset=use_preset,
+        canvas_mode=canvas_mode,
     )

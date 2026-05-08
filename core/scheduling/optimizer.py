@@ -173,9 +173,9 @@ class SchedulingOptimizer:
 
         # 画笔切换耗时（直接使用指令生成器）
         if brush_type is not None and brush_size is not None:
-            from core.scheduling.brush import generate_brush_switch_commands
+            from core.scheduling.brush import generate_brush_nav_sequence
 
-            brush_cmds = generate_brush_switch_commands(
+            brush_cmds = generate_brush_nav_sequence(
                 brush_type, brush_size, timing=timing
             )
             total_ms += sum(cmd[1] for cmd in brush_cmds)

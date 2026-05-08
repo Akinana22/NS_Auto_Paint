@@ -1,19 +1,45 @@
 """
-图像像素化后台处理线程 v2.2.0
-用于在后台线程中执行像素化算法，避免阻塞 UI。
+图像处理后台线程 v2.3.1
+新管线 worker: crop -> pixelize -> quantize -> json
+旧 worker: ImageProcessWorkerPyx 保留用于第三方 JSON 兼容
 """
 
 from PySide6.QtCore import QThread, Signal
-from core.image.processor import pixelate_image_simple
+from core.image.processor import process_pipeline, pixelate_image_simple
 from core.utils.logger import get_logger
 
 
-class ImageProcessWorkerPyx(QThread):
-    """后台图像处理线程（基于 Pyxelate 或预设调色盘）"""
+class ImagePipelineWorker(QThread):
+    finished = Signal(object)
+    error = Signal(str)
 
-    finished = Signal(
-        object, int
-    )  # (pixel_image, color_palette, color_index_matrix), unique_colors
+    def __init__(self, image_path, canvas_mode, brush_type, brush_size, max_colors,
+                 offset_x=0, offset_y=0):
+        super().__init__()
+        self.image_path = image_path
+        self.canvas_mode = canvas_mode
+        self.brush_type = brush_type
+        self.brush_size = brush_size
+        self.max_colors = max_colors
+        self.offset_x = offset_x
+        self.offset_y = offset_y
+
+    def run(self):
+        logger = get_logger("ImagePipeline")
+        try:
+            result = process_pipeline(
+                self.image_path, self.canvas_mode, self.brush_type,
+                self.brush_size, self.max_colors, self.offset_x, self.offset_y,
+            )
+            self.finished.emit(result)
+        except Exception as e:
+            logger.error(str(e), exc_info=True)
+            self.error.emit(str(e))
+
+
+# 保留旧 worker 兼容性
+class ImageProcessWorkerPyx(QThread):
+    finished = Signal(object, int)
     error = Signal(str)
 
     def __init__(self, image_path, pixel_size, max_colors, use_preset=False, canvas_mode="standard"):
@@ -26,24 +52,12 @@ class ImageProcessWorkerPyx(QThread):
 
     def run(self):
         logger = get_logger("image_processor")
-        logger.info(
-            f"[后台线程启动] pixel_size={self.pixel_size}, max_colors={self.max_colors}, "
-            f"use_preset={self.use_preset}, canvas_mode={self.canvas_mode}"
-        )
         try:
             pixel_image, color_palette, color_index_matrix = pixelate_image_simple(
-                self.image_path,
-                self.pixel_size,
-                self.max_colors,
-                use_preset=self.use_preset,
-                canvas_mode=self.canvas_mode,
+                self.image_path, self.pixel_size, self.max_colors,
+                use_preset=self.use_preset, canvas_mode=self.canvas_mode,
             )
-            unique_colors = len(color_palette)
-            logger.info(f"[后台线程完成] 实际颜色数: {unique_colors}")
-            # 发送元组 (pixel_image, color_palette, color_index_matrix) 和 unique_colors
-            self.finished.emit(
-                (pixel_image, color_palette, color_index_matrix), unique_colors
-            )
+            self.finished.emit((pixel_image, color_palette, color_index_matrix), len(color_palette))
         except Exception as e:
-            logger.error(f"[后台线程异常] {str(e)}", exc_info=True)
+            logger.error(str(e), exc_info=True)
             self.error.emit(str(e))

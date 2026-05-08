@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QWidget, QPushButton, QLabel, QHBoxLayout, QApplic
 from PySide6.QtCore import Qt, QRect, QPoint, Signal
 from PySide6.QtGui import (
     QPixmap, QPainter, QPen, QBrush, QColor, QPaintEvent,
-    QWheelEvent, QMouseEvent, QPainterPath,
+    QWheelEvent, QMouseEvent, QPainterPath, QFont, QImage,
 )
 
 from core.models.canvas_mode import get_canvas_mode
@@ -85,8 +85,8 @@ class _ZoomToolbar(QWidget):
             QLabel {
                 background: rgba(255, 255, 255, 200);
                 color: #000000;
-                font-size: 13px;
-                font-weight: bold;
+                font-size: 14px;
+                font-family: "Microsoft YaHei UI";
                 border-radius: 3px;
                 padding: 1px 6px;
                 min-width: 44px;
@@ -119,6 +119,10 @@ class _ZoomToolbar(QWidget):
         layout.addWidget(self.btn_in)
         layout.addWidget(self.btn_fit)
 
+        f = self.label_pct.font()
+        f.setStyleStrategy(QFont.StyleStrategy.PreferDevice)
+        self.label_pct.setFont(f)
+
     def set_zoom_pct(self, pct: int):
         self.label_pct.setText(f"{pct}%")
 
@@ -129,11 +133,14 @@ class CanvasPreview(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._pixmap: QPixmap | None = None
+        self._source_image = None
+        self._current_fitted = None
         self._canvas_mode: str = "standard"
         self._scale: float = 1.0
         self._offset = QPoint(0, 0)
         self._dragging = False
         self._last_mouse_pos = QPoint()
+        self._crop_mode: bool = False
 
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -150,7 +157,10 @@ class CanvasPreview(QWidget):
 
     def setPixmap(self, pixmap: QPixmap):
         self._pixmap = pixmap
-        self._fit_to_widget()
+        self._scale = 1.0
+        self._offset = QPoint(0, 0)
+        self._source_image = None
+        self._current_fitted = None
         self._update_zoom_label()
         self.update()
 
@@ -159,8 +169,70 @@ class CanvasPreview(QWidget):
             self._canvas_mode = mode
             self.update()
 
+    def showAtFullSize(self, pixmap: QPixmap):
+        self._pixmap = pixmap
+        self._scale = 1.0
+        self._offset = QPoint(0, 0)
+        self._update_zoom_label()
+        self.update()
+
+    def setCropMode(self, enabled: bool):
+        self._crop_mode = enabled
+        self.update()
+
+    def setSourceImage(self, image, canvas_mode: str):
+        self._source_image = image
+        self._canvas_mode = canvas_mode
+        self._rebuild_pixmap(1.0)
+        self._update_zoom_label()
+        self.setCropMode(True)
+        self.update()
+
+    def getFittedImage(self):
+        return self._current_fitted
+
+    def _rebuild_pixmap(self, scale: float):
+        if self._source_image is None:
+            return
+        mode = get_canvas_mode(self._canvas_mode)
+        cw, ch = mode.active_w, mode.active_h
+        target_w = max(1, int(cw * scale))
+        target_h = max(1, int(ch * scale))
+
+        iw, ih = self._source_image.size
+        s = max(target_w / iw, target_h / ih)
+        new_w = max(1, int(iw * s))
+        new_h = max(1, int(ih * s))
+
+        from PIL import Image as PILImage
+        self._current_fitted = self._source_image.resize((new_w, new_h), PILImage.LANCZOS)
+        buf = self._current_fitted.tobytes("raw", "RGBA")
+        qi = QImage(buf, new_w, new_h, QImage.Format_RGBA8888)
+        self._pixmap = QPixmap.fromImage(qi)
+        self._scale = scale
+
+    def getCropPixels(self) -> tuple[int, int, int, int]:
+        if self._current_fitted is None or self._scale <= 0:
+            return (0, 0, 0, 0)
+        pw = self._current_fitted.width
+        ph = self._current_fitted.height
+        mode = get_canvas_mode(self._canvas_mode)
+        cw, ch = mode.active_w, mode.active_h
+
+        # 裁切结果 = 图像中央的 active_w × active_h 区域
+        left = max(0, (pw - cw) // 2)
+        top = max(0, (ph - ch) // 2)
+
+        from core.utils.logger import get_logger as _log
+        _lg = _log("CanvasPreview")
+        _lg.info(f"[getCropPixels] fitted={pw}x{ph} active={cw}x{ch} "
+                 f"scale={self._scale:.3f} offset=({self._offset.x()},{self._offset.y()}) "
+                 f"result=({left},{top},{left+cw},{top+ch})")
+        return (left, top, left + cw, top + ch)
+
     def resetView(self):
-        self._fit_to_widget()
+        self._rebuild_pixmap(1.0)
+        self._offset = QPoint(0, 0)
         self._update_zoom_label()
         self.update()
 
@@ -184,7 +256,12 @@ class CanvasPreview(QWidget):
         self._zoom_to_anchor(self.width() / 2.0, self.height() / 2.0, new_scale)
 
     def _zoom_to_anchor(self, anchor_x: float, anchor_y: float, new_scale: float):
-        """以屏幕坐标 (anchor_x, anchor_y) 为锚点设置缩放，保持像素位置不变"""
+        if self._source_image is not None:
+            self._rebuild_pixmap(new_scale)
+            self._update_zoom_label()
+            self.update()
+            return
+
         if self._pixmap is None or self._pixmap.isNull():
             self._scale = new_scale
             self._update_zoom_label()
@@ -199,15 +276,12 @@ class CanvasPreview(QWidget):
             self.update()
             return
 
-        # 计算锚点在源图像中的像素坐标
         old_center_x = (self.width() - pw * old_scale) / 2.0
         old_center_y = (self.height() - ph * old_scale) / 2.0
         px = (anchor_x - old_center_x - self._offset.x()) / old_scale
         py = (anchor_y - old_center_y - self._offset.y()) / old_scale
 
         self._scale = new_scale
-
-        # 用新缩放计算 offset，使锚点映射到同一像素坐标
         new_center_x = (self.width() - pw * new_scale) / 2.0
         new_center_y = (self.height() - ph * new_scale) / 2.0
         self._offset.setX(int(anchor_x - new_center_x - px * new_scale))
@@ -246,7 +320,10 @@ class CanvasPreview(QWidget):
             self._draw_pixel_grid(painter, target_rect, pw, ph)
 
         mode = get_canvas_mode(self._canvas_mode)
-        self._draw_canvas_overlay(painter, target_rect, pw, ph, mode)
+        if self._crop_mode:
+            self._draw_crop_frame(painter, mode)
+        else:
+            self._draw_canvas_overlay(painter, target_rect, pw, ph, mode)
 
         painter.end()
 
@@ -299,6 +376,38 @@ class CanvasPreview(QWidget):
         painter.setPen(DASH_PEN)
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(active)
+        painter.restore()
+
+    # ---------- crop frame ----------
+    def _draw_crop_frame(self, painter: QPainter, mode):
+        painter.save()
+        cw, ch = mode.active_w, mode.active_h
+        wf = self.width() * 0.7 / cw if cw > 0 else 1
+        hf = self.height() * 0.7 / ch if ch > 0 else 1
+        frame_scale = min(wf, hf, 2.0)
+        fw = int(cw * frame_scale)
+        fh = int(ch * frame_scale)
+        fx = (self.width() - fw) // 2
+        fy = (self.height() - fh) // 2
+
+        from core.utils.logger import get_logger as _log
+        _lg = _log("CanvasPreview")
+        _lg.info(f"[draw_crop_frame] widget={self.width()}x{self.height()} "
+                 f"active={cw}x{ch} frame_scale={frame_scale:.3f} "
+                 f"frame=({fx},{fy},{fw},{fh})")
+
+        frame = QRect(fx, fy, fw, fh)
+        widget_rect = QRect(0, 0, self.width(), self.height())
+
+        overlay_path = QPainterPath()
+        overlay_path.addRect(widget_rect)
+        overlay_path.addRect(frame)
+        overlay_path.setFillRule(Qt.WindingFill)
+        painter.fillPath(overlay_path, QBrush(OVERLAY_COLOR))
+
+        painter.setPen(DASH_PEN)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(frame)
         painter.restore()
 
     # ---------- checkerboard ----------
